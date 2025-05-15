@@ -1,0 +1,1049 @@
+---
+title: "Progetto Statistical Learning"
+author: "Giorgia Faccanoni mat. 871869"
+date: "31-01-2025"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# **Diagnosi dell'osteoporosi tramite radiografie**
+
+### **Sommario**
+
+Nel presente progetto si è affrontata un’analisi di classificazione multiclasse con l’obiettivo di individuare a quale stato della malattia osteoporosi appartengono alcune immagini di radiografie di ginocchia di diversi pazienti. Sono state presentate come possibili soluzioni al problema diverse reti neurali convoluzionali, adottando diverse tecniche come data augmentation e transfer learning.
+
+### **Introduzione**
+
+L'osteoporosi é uno dei disturbi più frequenti a livello del ginocchio, si verifica maggiormente in soggetti dopo i 40 anni e nelle donne in menopausa, periodo in cui avviene un calo di ormoni utili all'equilibrio del metabolismo osseo. L'inizio dell'osteoporosi avviene con la diagnosi di osteopenia, ovvero una patologia legata alla riduzione della densità minerale ossea, che rende le ossa più fragili e predisposte a eventuali fratture. L'osteoporosi viene rilevata quando sia la densità minerale ossea sia la massa ossea diminuiscono, causando un difetto nella struttura del tessuto osseo che può portare fino alla frattura ossea.
+
+L'obiettivo di questo progetto è analizzare diverse immagini di radiografie di ginocchia e riuscire a classificarle in modo corretto rispetto alla classe di appartenenza, ovvero rispetto alla malattia che è stata individuata per ogni paziente. Per analizzare le immagini sono state utilizzate diverse reti neurali convoluzionali. Per prima cosa si è provato ad applicare una rete convoluzionale classica sul training set in modo da individuarne i problemi; si è riscontrato che la rete va in overfitting e inoltre non è in grado di prevedere in modo particolare la classe osteopenia. Questo può essere dovuto dal fatto che il dataset ha classe sbilanciate, infatti contiene meno immagini per la classe osteopenia. Per risolvere questo problema si è pensato di applicare data augmentation solo per la classe osteopenia in modo da ottenere un dataset a classi bilanciate. I risultati migliorano ma non in modo considerevole ottenendo un'*accuracy* di 0.7263 sul test set, ma comunque si riscontra anche in questo caso il problema di overfitting. Per risolvere questo problema si è pensato di applicare data augmentation su tutto il training e si è ottenuta un'*accuracy* sul training pari a 0.6253 e sul validation pari a 0.6812. In questo caso le due metriche assumono valori molto vicini, si ha un valore più elevato nel validation rispetto che nel training per cui si è ridotto l'overfitting. Questo modello, però, performa peggio rispetto alle reti precedenti. Inoltre si è applicata la tecnica di transfer learning, in particolare feature extraction in cui sono stati selezionati e utilizzati i pesi della parte convoluzionale della rete pre allenata VGG-19 per applicarli alle immagini delle radiografie e utilizzare una nuova rete neurale per classificare.
+
+Il problema principale di questa rete e delle precedenti è stato il fatto che questi modelli non riescono a individuare in modo ottimale le immagini che appartengono alla classe osteopenia. Questa classe, infatti, si riscontra essere la più problematica poichè rappresenta uno stato della malattia intermedio che su alcuni soggetti può presentarsi in modo lieve e quindi essere difficilmente distinguibile dalla classe normale, mentre per altri può essere più vicina allo stato di osteoporosi. Per questo motivo si è deciso, infine, di modificare il dataset raggruppando le immagini che appartengono alla classe osteopenia a quelle della classe osteoporosi, in modo da applicare una rete convoluzionale per classificazione binaria. I risultati di questo modello sono soddisfacenti: si è ottenuta un*'accuracy* pari a 0.8477 sul test set e valori di *specificity* e *sensitivity* elevati.
+
+### **Materiali**
+
+Il dataset è stato ricavato da <https://www.kaggle.com/datasets/mohamedgobara/multi-class-knee-osteoporosis-x-ray-dataset/data>. Esso è composto da 1947 immagini di radiografie di ginocchia. Esse sono suddivise in 780 immagini per la classe *normale* ovvero radiografie di pazienti non soggetti alla malattia, 374 immagini per la classe *osteopenia* e 783 immagini per la classe *osteoporosi*.
+
+Il primo passo del progetto è stato quello di scaricare le immagini e creare una cartella ad hoc per poterle visualizzare.
+
+```{r eval=FALSE}
+library(keras)
+path <- "C:/Users/utente/Desktop/OS Collected Data"
+
+original_normal_dir <- paste(path,"/Normal", sep="")
+original_osteopenia_dir <- paste(path,"/Osteopenia", sep="")
+original_Osteoporosis_dir <- paste(path,"/Osteoporosis", sep="")
+
+base_dir <- paste(path, "ginocchio1", sep="")
+dir.create(base_dir)
+
+train_dir <- file.path(base_dir, "train")
+dir.create(train_dir)
+
+validation_dir <- file.path(base_dir, "validation")
+dir.create(validation_dir)
+
+test_dir <- file.path(base_dir, "test")
+dir.create(test_dir)
+
+train_osteoporosi_dir <- file.path(train_dir, "osteoporosi")
+dir.create(train_osteoporosi_dir)
+
+train_osteopenia_dir <- file.path(train_dir, "osteopenia")
+dir.create(train_osteopenia_dir)
+
+train_normale_dir <- file.path(train_dir, "normale")
+dir.create(train_normale_dir)
+
+validation_osteoporosi_dir <- file.path(validation_dir, "osteoporosi")
+dir.create(validation_osteoporosi_dir)
+
+validation_osteopenia_dir <- file.path(validation_dir, "osteopenia")
+dir.create(validation_osteopenia_dir)
+
+validation_normale_dir <- file.path(validation_dir, "normale")
+dir.create(validation_normale_dir)
+
+test_osteoporosi_dir <- file.path(test_dir, "osteoporosi")
+dir.create(test_osteoporosi_dir)
+
+test_osteopenia_dir <- file.path(test_dir, "osteopenia")
+dir.create(test_osteopenia_dir)
+
+test_normale_dir <- file.path(test_dir, "normale")
+dir.create(test_normale_dir)
+
+```
+
+Le immagini vengono poi caricate all'interno delle cartelle create. Per ogni classe si caricano le immagini dividendole in training set, validation set e test set, inserendone il 50% nel training, il 25% nel validation e il 25% nel test. Poichè le immagini per ogni classe hanno differenti formati sono state caricate adattando il codice al tipo di formato di ognuna (.jpg, .JPEG, .png).
+
+```{r eval=FALSE}
+#classe normale
+#train
+fnames <- paste0("Normal ", 1:390, ".png")
+file.copy(file.path(original_normal_dir, fnames),
+          file.path(train_normale_dir))
+fnames <- paste0("Normal ", 1:390, ".jpg")
+file.copy(file.path(original_normal_dir, fnames),
+          file.path(train_normale_dir))
+fnames <- paste0("Normal ", 1:390, ".JPEG")
+file.copy(file.path(original_normal_dir, fnames),
+          file.path(train_normale_dir))
+#validation
+fnames <- paste0("Normal ", 391:585, ".jpg")
+file.copy(file.path(original_normal_dir, fnames),
+          file.path(validation_normale_dir))
+fnames <- paste0("Normal ", 391:585, ".png")
+file.copy(file.path(original_normal_dir, fnames),
+          file.path(validation_normale_dir))
+fnames <- paste0("Normal ", 391:585, ".JPEG")
+file.copy(file.path(original_normal_dir, fnames),
+          file.path(validation_normale_dir))
+#test
+fnames <- paste0("Normal ", 586:780, ".jpg")
+file.copy(file.path(original_normal_dir, fnames),
+          file.path(test_normale_dir))
+#tutte .jpg
+
+#osteopenia
+#train
+fnames <- paste0("Osteopenia ", 1:187, ".jpg")
+file.copy(file.path(original_osteopenia_dir, fnames),
+          file.path(train_osteopenia_dir))
+#tutti .jpg
+#validation
+fnames <- paste0("Osteopenia ", 188:281, ".jpg")
+file.copy(file.path(original_osteopenia_dir, fnames),
+          file.path(validation_osteopenia_dir))
+fnames <- paste0("Osteopenia ", 188:281, ".png")
+file.copy(file.path(original_osteopenia_dir, fnames),
+          file.path(validation_osteopenia_dir))
+fnames <- paste0("Osteopenia ", 188:281, ".JPEG")
+file.copy(file.path(original_osteopenia_dir, fnames),
+          file.path(validation_osteopenia_dir))
+#test
+fnames <- paste0("Osteopenia ", 282:374, ".jpg")
+file.copy(file.path(original_osteopenia_dir, fnames),
+          file.path(test_osteopenia_dir))
+fnames <- paste0("Osteopenia ", 282:374, ".png")
+file.copy(file.path(original_osteopenia_dir, fnames),
+          file.path(test_osteopenia_dir))
+fnames <- paste0("Osteopenia ", 282:374, ".JPEG")
+file.copy(file.path(original_osteopenia_dir, fnames),
+          file.path(test_osteopenia_dir))
+
+#osteoporosi
+#train
+fnames <- paste0("Osteoporosis ", 1:397, ".jpg")
+file.copy(file.path(original_Osteoporosis_dir, fnames),
+          file.path(train_osteoporosi_dir))
+fnames <- paste0("Osteoporosis ", 1:397, ".png")
+file.copy(file.path(original_Osteoporosis_dir, fnames),
+          file.path(train_osteoporosi_dir))
+fnames <- paste0("Osteoporosis ", 1:397, ".JPEG")
+file.copy(file.path(original_Osteoporosis_dir, fnames),
+          file.path(train_osteoporosi_dir))
+#validation
+fnames <- paste0("Osteoporosis ", 398:595, ".jpg")
+file.copy(file.path(original_Osteoporosis_dir, fnames),
+          file.path(validation_osteoporosi_dir))
+fnames <- paste0("Osteoporosis ", 398:595, ".png")
+file.copy(file.path(original_Osteoporosis_dir, fnames),
+          file.path(validation_osteoporosi_dir))
+fnames <- paste0("Osteoporosis ", 398:595, ".JPEG")
+file.copy(file.path(original_Osteoporosis_dir, fnames),
+          file.path(validation_osteoporosi_dir))
+#test
+fnames <- paste0("Osteoporosis ", 596:793, ".jpg")
+file.copy(file.path(original_Osteoporosis_dir, fnames),
+          file.path(test_osteoporosi_dir))
+#solo jpg
+```
+
+### **Metodi e risultati**
+
+#### **Rete neurale convoluzionale**
+
+Il primo modello utilizzato per raggiungere l'obiettivo di classificazione delle immagini di radiografie di ginocchia in tre differenti classi è stata una rete convoluzionale formata da 4 layer convoluzionali con un kernel (3x3), stride pari a 1 e senza padding. Il numero di kernel è stato impostato pari a 32 nel primo layer convoluzionale per poi arrivare a 128 kernel nell'ultimo layer. Tra i layer convoluzionali è stato applicato un layer di max pooling di grandezza (2x2) con stride pari a 2, in modo da ridurre la dimensione delle immagini e quindi i pesi della rete. Una volta applicato il layer flatten per sistemare la dimensione dell'immagine è stato applicato un layer di dropout con tasso pari a 0.5, in modo da spegnere la metà dei nodi in fase di adddestramento della rete con l'obiettivo di ridurre l'overfitting. Infine sono stati aggiunti 3 layer densi per poter effettuare la classificazione delle immagini. La funzione di attivazione per i layer convoluzionali è stata la funzione *ReLu,* mentre per i layer densi la funzione *Leaky_Relu*. Il layer finale di output è stato impostato con 3 nodi che rappresentano le tre classi con funzione di attivazione *Softmax* che restituisce la probabilità di appartenenza di ciascuna immagine alle tre classi*.* Come funzione di perdita è stata utilizzata la *crossentropy* adatta per problemi di classificazione multiclasse. La metrica utilizzata per valutare le prestazioni del modello è l'*accuracy* e come metodo di ottimizzazione dei pesi *Adam* che gestisce il parametro learning rate all'interno dell'algoritmo gradient descent ed è utile per evitare l'overfitting*.*
+
+Le immagini sono state generate ottenendo un tensore di grandezza (224, 224, 3) per ogni immagine. In questa prima applicazione non è stato implementato il processo di data augmentation e tutte le immagini sono state riscalate.
+
+```{r eval=FALSE}
+#utilizzo un generatore per importare le immagini, sia per il validation e 
+#training sia per il test set.
+test_datagen <- image_data_generator(rescale = 1/255)
+validation_datagen <- image_data_generator(rescale = 1/255)
+
+#genero il training senza data augmentation
+train_generator <- flow_images_from_directory(
+  train_dir,
+  validation_datagen, 
+  target_size = c(224, 224),
+  batch_size = 16,
+  class_mode = "categorical"
+)
+
+#genero il validation
+validation_generator <- flow_images_from_directory(
+  validation_dir,
+  validation_datagen,
+  target_size = c(224, 224),
+  batch_size = 16,
+  class_mode = "categorical"
+)
+
+#definisco la struttura della rete
+model <- keras_model_sequential() %>%
+  layer_conv_2d(filters = 32, kernel_size = c(3, 3), activation = "relu", 
+                input_shape = c(224, 224, 3)) %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 64, kernel_size = c(3, 3), activation = "relu") %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 128, kernel_size = c(3, 3), activation = "relu") %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 128, kernel_size = c(3, 3), activation = "relu") %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_flatten() %>%
+  layer_dropout(rate = 0.5) %>%
+  layer_dense(units = 256, activation = "leaky_relu") %>%
+  layer_dense(units = 128, activation = "leaky_relu") %>%
+  layer_dense(units = 64, activation = "leaky_relu") %>%
+  layer_dense(units = 3, activation = "softmax")
+
+model %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adam",
+  metrics = c("acc")
+)
+
+model
+```
+
+```         
+Model: "sequential_1"
+Layer (type)                       Output Shape                    Param       
+================================================================================ 
+conv2d_3 (Conv2D)                  (None, 222, 222, 32)            896          
+max_pooling2d_3 (MaxPooling2D)     (None, 111, 111, 32)            0             
+conv2d_2 (Conv2D)                  (None, 109, 109, 64)            18496         
+max_pooling2d_2 (MaxPooling2D)     (None, 54, 54, 64)              0             
+conv2d_1 (Conv2D)                  (None, 52, 52, 128)             73856         
+max_pooling2d_1 (MaxPooling2D)     (None, 26, 26, 128)             0             
+conv2d (Conv2D)                    (None, 24, 24, 128)             147584        
+max_pooling2d (MaxPooling2D)       (None, 12, 12, 128)             0             
+flatten_1 (Flatten)                (None, 18432)                   0             
+dropout_1 (Dropout)                (None, 18432)                   0             
+dense_7 (Dense)                    (None, 256)                     4718848       
+dense_6 (Dense)                    (None, 128)                     32896         
+dense_5 (Dense)                    (None, 64)                      8256          
+dense_4 (Dense)                    (None, 3)                       195    
+
+
+================================================================================ 
+Total params: 5001027 (19.08 MB) 
+Trainable params: 5001027 (19.08 MB) 
+Non-trainable params: 0 (0.00 Byte)  
+
+________________________________________________________________________________ 
+```
+
+Una volta definita la rete, essa è stata applicata al training set impostando 20 epoche. Il numero di passi per epoca è dato dal numero totale di osservazioni nel training sul batch size che è stato impostato pari a 16. Il batch size indica il numero di immagini che vengono selezionate ad ogni iterazione e con cui vengono aggiornati i pesi, in questo modo la rete non utilizza ad ogni iterazione tutte le immagini del training ma solo un sottocampione in modo di ottimizzare i tempi computazionali e cercare di ridurre l'overfitting.
+
+```{r eval=FALSE}
+history <- model %>% fit(
+  train_generator,
+  epochs = 20,  
+  steps_per_epoch = 61,   #974/16=61 (num obs train / batch size)
+  validation_data = validation_generator,
+  validation_steps = 30   #487/16=30 (num obs validation / batch size)
+)
+plot(history)
+```
+
+![`Rete convoluzionale classica`](images/rete%20normale.png){width="644"}
+
+Come si può notare dal grafico, dopo l'epoca 15 la metrica *accuracy* rimane costante ma la funzione di perdita inizia ad aumentare notevolmente nel validation set, si decide quindi di applicare la tecnica di early stopping e terminare la rete all'epoca 15. Viene quindi riallenata la stessa rete con numero epoche pari a 15 e si ottiene un'*accuracy* pari a 0.9456 sul training set e pari a 0.7646 sul validation set; questa metrica mostra un buon funzionamento del modello. Nonostante ciò si è riscontrato un problema nel modello a causa dei valori della funzione di perdita. Essa assume valore 0.1396 nel training set e 1.4209 nel validation set, si ha quindi una forte discrepanza tra validation e training che fa pensare a un problema di overfitting.
+
+Dopo aver generato il test set riscalando le immagini, sono state calcolate le previsioni delle classi per il test secondo la rete neurale appena costruita. Si è ottenuta un'*accuracy* pari a 0.785.
+
+```{r eval=FALSE}
+test_generator <- flow_images_from_directory(
+  test_dir,
+  test_datagen,
+  target_size = c(224, 224),
+  batch_size = 16,
+  class_mode = "categorical",
+  shuffle=F #per tenere le immagini sempre nello stesso ordine
+)
+
+model %>% evaluate(test_generator, steps = 30)
+```
+
+Per testare il funzionamento della rete neurale sono state individuate le probabilità di appartenenza ad ogni classe delle immagini del test set ed è stata ricavata la classe prevista. Si è poi confrontata la classe prevista dal modello rispetto alla vera classe per verificare se il modello è stato in grado di prevedere in modo simile in tutte le tre classi. Dalla matrice di confusione si può individuare che il modello è in grado di individuare le classi di appartenenza globalmente, ma si nota un problema di classificazione per la classe con numerosità inferiore, ovvero la classe 1 che corrisponde alla classe *Osteopenia*.
+
+Sono state calcolate metriche come la *sensitivity* e la *specificity* per ogni classe. Questi indicatori sono molto utili nel caso di classi sbilanciate. La *precision* o *specificity* indica se il modello è preciso per una classe. Di fatto, la metrica informa quanto spesso il modello è in grado di classificare correttamente un'immagine nella classe di interesse. Si calcola attraverso il rapporto tra il numero di osservazioni classificate correttamente nella classe di interesse e il numero di osservazioni totali che sono state assegnate dal modello a quella classe. La precisione è in grado di stabilire quanto il modello è specifico ma non tiene conto delle immagini che sono state classificate ad un'altra classe quando in realtà appartengono a quella che si sta analizzando. Il modello quindi può essere preciso/specifico ma può non essere selettivo/sensibile. Per questo motivo si considera un’altra misura la *sensitivity* o *recall* che tiene conto di quanto il modello è in grado di individuare correttamente le osservazioni che appartengono realmente a quella classe. Il *recall* misura la sensibilità del modello ed è il rapporto tra le osservazioni correttamente previste per una classe sul totale dei casi in cui si verifica effettivamente quella determinata classe.
+
+```{r eval=FALSE}
+#salvo il modello
+model %>% save_model_hdf5("primarete.h5")
+modello<- load_model_hdf5("primarete.h5")
+
+#prevedo le classi 
+y<-predict(modello, test_generator) 
+classe_prevista<-apply(y, 1, which.max)-1
+
+#estraggo la classe osservata nelle immagini del test 
+classe_osservata<-test_generator$classes
+
+#tabella di frequenza di preisione sulle classi 
+tabella<- table(classe_prevista, classe_osservata)
+tabella
+```
+
+```         
+tabella di frequenza
+
+                classe_osservata 
+classe_prevista     0   1   2              
+                0  178  37  18              
+                1   0   23   0               
+                2  17   33  180
+```
+
+```{r eval=FALSE}
+
+library(caret)
+conf<- confusionMatrix(as.factor(classe_prevista), as.factor(classe_osservata))
+#metriche 
+precision<-conf$byClass[, "Specificity"]  
+conf$overall[1]
+precision
+```
+
+```         
+Accuracy  0.78395
+
+precision
+Class: 0  Class: 1  Class: 2  
+0.8109966 1.0000000 0.8263889 
+```
+
+```{r eval=FALSE}
+recall<-conf$byClass[, "Sensitivity"]
+recall
+```
+
+```         
+ recall
+ Class: 0  Class: 1  Class: 2  
+ 0.9128205 0.2473118 0.9090909 
+```
+
+Dalla matrice di confusione si può notare che la classe di interesse, ovvero la classe 1 *osteopenia* assume un valore di *specificity* pari a 1, quindi il modello è molto specifico per quella classe dato che le immagini che è riuscito a individuare per quella classe appartengono tutte a *osteopenia.* Il problema sta nel fatto che il modello è in grado di individuare solo 23 immagini di questa classe rispetto a un totale di 93, infatti il *recall* assume un valore molto basso, pari a 0.247. Per la classe 0 che corrisponde a *normale* e per la classe 2 che corrisponde a *osteoporosi* invece il modello sembra prevedere in modo ottimale.
+
+#### **Rete convoluzionale con data augmentation per la classe osteopenia**
+
+Per risolvere il problema dell'individuazione corretta dell'etichetta *osteopenia* è stata applicata la tecnica di data augmentation solo per quella classe e solo sul training set, lasciando invariato il validation set. Qui di seguito si può vedere un'esempio di data augmentation solo per un'immagine.
+
+```{r eval=FALSE}
+#aumento immagine della classe ospeopenia nel training
+fnames <- list.files(train_osteopenia_dir, full.names = TRUE)
+datagen <- image_data_generator(
+  rescale = 1/255,
+  rotation_range = 40,
+  width_shift_range = 0.2,
+  height_shift_range = 0.2,
+  shear_range = 0.2,
+  zoom_range = 0.2,
+  horizontal_flip = TRUE,
+  brightness_range = c(0.8, 1.2), # Luminosità
+  fill_mode = "nearest"
+)
+
+# immagine da aumentare
+img_path <- fnames[[2]]
+img <- image_load(img_path, target_size = c(224, 224))
+img_array <- image_to_array(img)
+img_array <- array_reshape(img_array, c(1, 224, 224, 3))
+
+augmentation_generator <- flow_images_from_data(
+  img_array,
+  generator = datagen,
+  batch_size = 1
+)
+#grafico
+op <- par(mfrow = c(2, 2), pty = "s", mar = c(1, 0, 1, 0))
+for (i in 1:4) {
+  batch <- generator_next(augmentation_generator)
+  plot(as.raster(batch[1,,,]))
+} 
+```
+
+![`Immagine aumentata`](images/immagini%20aumentate.png){width="645"}
+
+Di seguito l'algoritmo di data augmentation. Per motivi computazionali le immagini sono state ridotte a una dimensione di input pari a (150x150) ed è stato scelto un batch size pari a 20.
+
+```{r eval=FALSE}
+#Applicazione data augmentation solo per la classe osteopenia nel training set
+
+#Generatore senza data augmentation (per le altre classi: Normale e osteoporosi)
+base_gen <- image_data_generator(rescale = 1/255)
+
+#Generatore con data augmentation (solo per la classe osteopenia)
+augment_gen <- image_data_generator(
+  rescale = 1/255,
+  rotation_range = 40,
+  width_shift_range = 0.2,
+  height_shift_range = 0.2,
+  shear_range = 0.2,
+  zoom_range = 0.2,
+  horizontal_flip = TRUE,
+  brightness_range = c(0.8, 1.2), # Luminosità
+  fill_mode = "nearest"
+)
+
+# Generatore per leggere tutte le immagini dalla directory del training set
+train_gen <- flow_images_from_directory(
+  directory = train_dir,
+  target_size = c(150, 150),  # Dimensione delle immagini
+  batch_size = 20,
+  class_mode = "categorical",    
+  shuffle = FALSE            # Non mescolare per identificare le classi 
+)
+
+```
+
+Si definisce l'algoritmo per generare le immagini aumentate solo per la classe *osteopenia*. Si è deciso di creare solo un'immagine per ogni immagine della classe *osteopenia*, in modo da raggiungere una dimensione pari a 374 elementi, dimensione molto simile alla classe *osteoporosi* pari a 397 e alla classe *normale* con 390 immagini, ottenendo così un dataset a classi bilanciate.
+
+```{r eval=FALSE}
+# Identifica le immagini della classe scelta}
+class_to_augment <- 2 
+class_indices <- train_gen$class_indices
+augment_class_index <- class_indices[[class_to_augment]] #classe osteopenia
+
+# Filtra le immagini della classe selezionata
+x_augment <- train_gen$filenames[train_gen$classes == augment_class_index]
+
+# Lista per salvare le immagini aumentate
+augmented_images <- list()
+
+# Applicare data augmentation per ciascuna immagine della classe osteopenia
+for (filename in x_augment) {
+  img_path <- file.path(train_dir, filename)
+  #carico le immagini
+  img <- image_load(img_path, target_size = c(150, 150))
+  # converto in array di dimensione (150, 150, 3)
+  img_array <- image_to_array(img)
+  #converto in (1, 150, 150, 3)
+  img_array <- array_reshape(img_array, c(1, 150, 150, 3))
+  
+  augmentation_generator <- flow_images_from_data(
+    img_array,
+    generator = augment_gen,
+    batch_size = 1
+  )
+  
+  # Generare 1 immagini aumentate per ogni immagine originale, in modo da ottenere la stessa   numerosità nelle tre classi, quindi ottenere classi bilanciate
+    batch <- generator_next(augmentation_generator)
+    augmented_images <- append(augmented_images, list(batch[[1]]))
+}
+```
+
+Creo una nuova directory all'interno della directory del training set sotto la classe *osteopenia* dove vengono inserite le immagini aumentate.
+
+```{r eval=FALSE}
+# Per salvare le immagini
+library(magick)  
+#Creazione directory di output per le immagini aumentate
+output_dir <- file.path(train_osteopenia_dir, "osteopenia_aug")
+dir.create(output_dir, recursive = TRUE)
+
+for (i in seq_along(augmented_images)) {
+  # Ottieni l'array dell'immagine
+  img_array <- augmented_images[[i]]
+  # Normalizza l'immagine (valori tra 0 e 1)
+  img_array <- img_array / 255
+  img_raster <- as.raster(img_array)
+  img_magick <- image_read(img_raster)
+
+  # Percorso di output
+  output_path <- file.path(output_dir, paste0("osteopenia_", i, ".jpg"))
+  
+  # Salva l'immagine
+  image_write(img_magick, path = output_path, format = "jpeg")
+}
+```
+
+Viene definita la struttura della rete, uguale a quella utilizzata precedentemente. Viene poi generato il training set, di dimensione pari a 1161 immagini, il validation set e viene salvato il modello.
+
+```{r eval=FALSE}
+#definisco la struttura della rete
+model <- keras_model_sequential() %>%
+  layer_conv_2d(filters = 32, kernel_size = c(3, 3), activation = "relu", 
+                input_shape = c(150, 150, 3)) %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 64, kernel_size = c(3, 3), activation = "relu") %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 128, kernel_size = c(3, 3), activation = "relu") %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 128, kernel_size = c(3, 3), activation = "relu") %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_flatten() %>%
+  layer_dropout(rate = 0.5) %>%
+  layer_dense(units = 256, activation = "leaky_relu") %>%
+  layer_dense(units = 128, activation = "leaky_relu") %>%
+  layer_dense(units = 64, activation = "leaky_relu") %>%
+  layer_dense(units = 3, activation = "softmax")
+
+model %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adam",
+  metrics = c("acc")
+)
+
+# Generatore per leggere tutte le immagini dalla directory del training set 
+train_gen <- flow_images_from_directory(
+  directory = train_dir,
+  target_size = c(150, 150),
+  batch_size = 20,
+  class_mode = "categorical",    
+  shuffle = FALSE ,
+  base_gen 
+)
+```
+
+```         
+Found 1161 images belonging to 3 classes.
+```
+
+```{r eval=FALSE}
+#genero il validation
+validation_generator <- flow_images_from_directory(
+  validation_dir,
+  target_size = c(150, 150),
+  batch_size = 20,
+  class_mode = "categorical",
+  generator=base_gen
+)
+
+batch_size<-20
+total_samples_t<-1161
+total_samples_v<-487
+  
+history <- model %>% fit(
+  train_gen,
+  epochs = 15,
+  steps_per_epoch =ceiling(total_samples_t / batch_size),  
+  validation_data = validation_generator,
+  validation_steps = ceiling(total_samples_v / batch_size)  
+)
+
+#salvo il modello
+model%>%save_model_hdf5("dataaugperuna.h5")
+```
+
+Il modello così allenato e validato genera *un'accuracy* sul training pari a 0.8381 e sul validation pari a 0.7207. Si testa il modello sul test set, dopo averlo generato, e si ottengono i seguenti risultati.
+
+```{r eval=FALSE}
+#valuto sul test 486 immagini 
+test_generator <- flow_images_from_directory(
+  test_dir,
+  base_gen,
+  target_size = c(150, 150),
+  batch_size = 20,
+  class_mode = "categorical",
+  shuffle = F
+)
+
+model %>% evaluate(test_generator, steps = 30)
+
+y_prev<- predict(model, test_generator)
+y_prev1<- apply(y_prev, 1, which.max)-1
+y_oss<- test_generator$classes
+
+table(y_oss, y_prev1)
+conf<- confusionMatrix(as.factor(y_prev1), as.factor(y_oss))
+conf
+```
+
+```         
+          Reference
+Prediction   0   1   2
+         0 127  13   7
+         1   0  35   0
+         2  68  45 191
+
+Accuracy : 0.7263
+                      Class: 0 Class: 1 Class: 2
+Sensitivity            0.6513  0.37634   0.9646
+Specificity            0.9313  1.00000   0.6076
+```
+
+Si nota che *l'accuracy* assume un valore pari a 0.7263, molto vicino al valore ottenuto in precedenza senza applicare data augmentation. Se ci si concentra sulla classe *osteopenia* si nota che rispetto al modello precedente la *sensitivity* è aumentata di circa 0.13 mentre la *specificity* è rimasta pari a 1. Si tratta di un piccolo miglioramento per la classe di interesse, ma bisogna comunque ricordare che si tratta di una fase intermedia della malattia e che quindi la radiografia in alcuni casi può essere molto simile a quella di una persona senza problematiche, mentre in altri casi la malattia può essere già a uno stato più avanzato e raggiungere i livelli di una persona con osteoporosi. Si ipotizza, quindi che queste immagini siano le più complesse da identificare per qualsiasi modello.
+
+Si può concludere che nonostante la rete convoluzionale sia stata allenata su un training a classi bilanciate, i risultati sul validation set e sul test set rimangono abbastanza invariati. Il problema di overfitting rimane poichè prevede in modo ottimale sui dati del training set ma fatica a generalizzare sul validation set e sul test set.
+
+#### **Data augmentation su tutto il training set**
+
+Per risolvere il problema dell'overfitting è stata applicata la tecnica di data augmentation su tutto il training set, lasciando il validation set invariato e utilizzando la stessa rete convoluzionale predefinita. La dimensione delle immagini è stata reimpostata a (224x224) in modo da ottenere risultati più soddisfacenti.
+
+```{r eval=FALSE}
+#data augmentation su tutto il training 
+datagen <- image_data_generator(
+  rescale = 1/255,
+  rotation_range = 40,
+  width_shift_range = 0.2,
+  height_shift_range = 0.2,
+  shear_range = 0.2,
+  zoom_range = 0.2,
+  horizontal_flip = TRUE,
+  brightness_range = c(0.8, 1.2), #luminosità
+  fill_mode = "nearest"
+)
+#aumento tutto il training 
+train_generator <- flow_images_from_directory(
+  train_dir,
+  datagen,
+  target_size = c(224, 224),
+  batch_size = 16,
+  class_mode = "categorical"
+)
+```
+
+```         
+Found 974 images belonging to 3 classes.
+```
+
+```{r eval=FALSE}
+#definisco la struttura della rete
+model <- keras_model_sequential() %>%
+  layer_conv_2d(filters = 32, kernel_size = c(3, 3), activation = "relu", 
+                input_shape = c(224, 224, 3)) %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 64, kernel_size = c(3, 3), activation = "relu") %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 128, kernel_size = c(3, 3), activation = "relu") %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 128, kernel_size = c(3, 3), activation = "relu") %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_flatten() %>%
+  layer_dropout(rate = 0.5) %>%
+  layer_dense(units = 256, activation = "leaky_relu") %>%
+  layer_dense(units = 128, activation = "leaky_relu") %>%
+  layer_dense(units = 64, activation = "leaky_relu") %>%
+  layer_dense(units = 3, activation = "softmax")
+model %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adam",
+  metrics = c("acc")
+)
+
+validation_datagen <- image_data_generator(rescale = 1/255)
+
+#genero il validation
+validation_generator <- flow_images_from_directory(
+  validation_dir,
+  validation_datagen,
+  target_size = c(224, 224),
+  batch_size = 16,
+  class_mode = "categorical"
+)
+
+history <- model %>% fit(
+  train_generator,
+  epochs = 15,
+  steps_per_epoch = 61,
+  validation_data = validation_generator,
+  validation_steps = 30
+)
+history
+```
+
+```         
+Final epoch (plot to see history):     
+train loss: 0.7733    val_loss: 0.6974  
+train acc: 0.6253     val_acc: 0.6812 
+```
+
+![`Rete con data augmentation su tutto il training`](images/rete%20con%20data%20augmentation%20solo%20con%2015%20epoche.png){width="651"}
+
+Si ottiene *un'accuracy* nel training set inferiore rispetto a quella ottenuta allenando la rete senza applicare la tecnica di data augmentation, quindi il modello performa in modo peggiore. Si nota però che sul validation set si ottiene *un'accuracy* pari a 0.68 poco inferiore rispetto a quella ottenuta in precedenza. Concentrandosi invece sulla funzione di perdita si nota un netto miglioramento dei valori sul validation set a sfavore di un errore più elevato nel training set. Si nota infatti che la funzione di loss assume valori più elevati nel training set rispetto che al validation set, mentre *l'accuracy* assume valori inferiori per il training set. Questo può essere dovuto dal fatto che aumentando di molto le immagini del training set il modello è meno performante in fase di addestramento, mentre potrebbe performare meglio sul validation set dove non è stata applicata la tecnica di data augmentation. Si nota che il fenomeno dell'overfitting è stato mitigato.
+
+La rete viene valutata sul test set.
+
+```{r eval=FALSE}
+#valuto sul test 486 immagini 
+test_datagen <- image_data_generator(rescale = 1/255)
+test_generator <- flow_images_from_directory(
+  test_dir,
+  test_datagen,
+  target_size = c(224, 224),
+  batch_size = 16,
+  class_mode = "categorical",
+  shuffle = FALSE
+)
+
+model %>% evaluate(test_generator, steps = 30)
+```
+
+```         
+loss       acc  
+0.7970310 0.6564 
+```
+
+```{r eval=FALSE}
+#calcolo la classe prevista per ogni immagine 
+y<-predict(model, test_generator) 
+classe_prevista<-apply(y, 1, which.max)-1
+#estraggo la classe osservata nelle immagini del test 
+classe_osservata<-test_generator$classes
+#matrice di confusione
+conf<- confusionMatrix(as.factor(classe_prevista), as.factor(classe_osservata))
+conf
+```
+
+```         
+Confusion Matrix and Statistics
+
+          Reference
+Prediction   0   1   2
+         0 162   4 121
+         1   5  82   2
+         2  28   7  75
+         
+Statistics by Class:                      
+                       Class: 0  Class: 1  Class: 2 
+Sensitivity            0.8308    0.8817    0.3788 
+Specificity            0.5704    0.9822    0.8785
+```
+
+L'*accuracy* e la funzione loss sul test set hanno valori abbastanza soddisfacenti anche se il modello performa in modo peggiore. Si nota che i valori di *sensitivity* e *specificity* della classe *osteopenia* sono molto elevati, a discapito però di valori meno ottimali per le altre due etichette. Nel complesso questo modello funziona, ma si preferisce il modello precedente.
+
+#### **Transfer learning con rete convoluzionale VGG-19**
+
+Poichè il dataset utilizzato contiene un numero non molto elevato di immagini si è pensato di applicare la tecnica di transfer learning, ovvero un metodo in cui un modello pre-addrestrato su un grande dataset, come ImageNet, viene adattato al problema specifico. Nel caso del dataset considerato si utilizza la rete pre-allenata VGG-19, si tratta di un'estensione dell'architettura VGG-16, composta da 19 layer, di cui 16 layer convoluzionali e 3 layer densi per la fase di classificazione. Tutti i layer convoluzionali utilizzano un kernel di dimensione 3x3 con stride 1 e sono seguiti da una funzione di attivazione ReLu. Viene poi applicato un layer di max-pooling ogni due layer convoluzionali con una dimensione 2x2 con stride 2.
+
+Nel caso in esame è stata utilizzata la tecnica di features extraction, in cui vengono direttamente utilizzati i pesi della parte convoluzionale della rete pre-allenata e si passano le immagini del dataset in esame senza aggiornare i pesi della parte convoluzionale. La parte di classificazione invece viene impostata in base al problema, in questo caso viene utilizzata una rete neurale con 3 layer densi con funzione di attivazione *ReLu* alternati da due layer di dropout e un layer di output con 3 classi e funzione di attivazione *softmax*.
+
+Si è deciso di allenare la rete sul training senza applicare data augmentation. Per motivi computazionali anche in questo caso le immagini sono state ridotte a una dimensione (150x150) con batch size pari a 20.
+
+```{r eval=FALSE}
+#feature extraction
+datagen <- image_data_generator(rescale = 1/255)
+batch_size <- 20
+
+#train
+train_generator <- flow_images_from_directory(
+  train_dir,
+  datagen,
+  target_size = c(150, 150),
+  batch_size = 20,
+  class_mode = "categorical"
+)
+
+#genero il validation
+validation_generator <- flow_images_from_directory(
+  validation_dir,
+  datagen,
+  target_size = c(150,150),
+  batch_size = 20,
+  class_mode = "categorical"
+)
+
+#genero test 
+test_generator <- flow_images_from_directory(
+  test_dir,
+  datagen,
+  target_size = c(150, 150),
+  batch_size = 20,
+  class_mode = "categorical",
+  shuffle=F #per tenere le immagini sempre nello stesso ordine
+)
+```
+
+Si carica la rete VGG-19 senza caricare la parte che si occupa della classificazione, ovvero si caricano solo i pesi e la struttura della parte convoluzionale che viene poi applicata al training set.
+
+```{r eval=FALSE}
+#utilizzo la rete vgg19
+conv_base <- application_vgg19(
+  weights = "imagenet",
+  include_top = FALSE,
+  input_shape = c(150, 150, 3)
+)
+
+extract_features_debug <- function(directory, sample_count) {
+  
+  features <- array(0, dim = c(sample_count, 4, 4, 512))
+  labels <- array(0, dim = c(sample_count))
+  
+  generator <- flow_images_from_directory(
+    directory = directory,
+    generator = datagen,
+    target_size = c(150, 150),
+    batch_size = 20,
+    class_mode = "categorical"
+  )
+  
+  i <- 0
+  while(TRUE) {
+    batch <- tryCatch({
+      generator_next(generator)
+    }, error = function(e) {
+      message("Errore nel batch, salto al successivo")
+      return(NULL) # Restituisce NULL se il batch non è valido
+    })
+    # Salta il batch se è NULL
+    if (is.null(batch)) next
+    
+    inputs_batch <- batch[[1]]
+    labels_batch <- batch[[2]]
+    features_batch <- conv_base %>% predict(inputs_batch)
+    
+    # Calcola gli indici per inserire le features
+    index_start <- i * batch_size + 1
+    index_end <- min((i + 1) * batch_size, sample_count) 
+    
+    # Verifica che gli indici siano validi
+    if (index_end > sample_count) break
+    index_range <- index_start:index_end
+    
+    # Controlla che le dimensioni siano compatibili
+    if (length(index_range) != dim(features_batch)[1]) {
+      message("Dimensioni incompatibili, salto il batch")
+      next
+    }
+    
+    # Assegna le features e le labels
+    features[index_range,,,] <- features_batch[,,,]
+    labels[index_range] <- apply(labels_batch, 1, which.max) # Converte le categorie
+    
+    i <- i + 1
+    if (i * batch_size >= sample_count) break
+  }
+  
+  list(
+    features = features,
+    labels = labels
+  ) 
+}
+
+train <- extract_features_debug(train_dir, 974)
+validation <-extract_features_debug(validation_dir, 487)
+test <-extract_features_debug(test_dir, 486)
+
+reshape_features <- function(features) {
+  array_reshape(features, dim = c(nrow(features), 4*4*512))
+}
+
+train$features <- reshape_features(train$features)
+validation$features <- reshape_features(validation$features)
+test$features <- reshape_features(test$features)
+
+y_train<- to_categorical(train$labels-1)
+y_val<- to_categorical(validation$labels-1)
+y_test<- to_categorical(test$labels-1)
+
+#definizione della struttura della rete
+model <- keras_model_sequential() %>%
+  layer_dense(units = 256, activation = "relu", input_shape = 4*4*512) %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dropout(rate = 0.5) %>%
+  layer_dense(units = 64, activation = "relu")%>%
+  layer_dropout(rate = 0.5) %>%
+  layer_dense(units = 3, activation = "softmax")
+
+model %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adam",
+  metrics = c("acc"))
+
+history <- model %>% fit(
+  train$features, y_train,
+  epochs = 30,
+  batch_size = 20,
+  validation_data = list(validation$features, y_val)
+)
+
+#salvo il modello
+model %>% save_model_hdf5("rete_feature.h5")
+modello_feaure_extr_new<- load_model_hdf5("rete_feature.h5")
+
+history
+```
+
+```         
+Final epoch (plot to see history):     
+loss: 0.0864       
+acc:  0.9661
+val_loss:  1.486
+val_acc:   0.8275
+```
+
+Si ottengono valori di *accuracy* soddisfacenti sia sul training che sul validation, molto simili a quelli ottenuti tramite la prima rete convoluzionale implementata. Vengono poi ottenuti i seguenti risultati sul test set:
+
+```{r eval=FALSE}
+model %>% evaluate(test$features, y_test, steps = 30)
+
+#calcolo la classe prevista e osservata per ogni immagine e calcolo sensitivity e specificity
+classe_osservata<-apply(y_test, 1, which.max)-1
+classe_prev<- predict(modello_feaure_extr_new, test$features)
+classe_prevista<-apply(classe_prev, 1, which.max)-1
+#tabella di frequenza di preisione sulle classi 
+conf<- confusionMatrix(as.factor(classe_prevista), as.factor(classe_osservata))
+conf
+```
+
+```         
+          Reference
+Prediction   0    1    2
+         0  191  33   15 
+         1   0   44    0
+         2   4   16   183
+         
+Accuracy: 0.8600823
+                      Class: 0    Class: 1    Class: 2 
+Sensitivity           0.9794872   0.4731183   0.9242424
+Specificity           0.8350515   1.0000000   0.9305556
+```
+
+Il modello è molto accurato nell'individuare le classi di appartenenza delle immagini nel test set. Si nota soprattutto un piccolo miglioramento della *sensitivity* per la classe *osteopenia*, ovvero la classe che più di tutte il modello non era in grado di individuare correttamente.
+
+Bisogna ricordare che anche con quest'ultimo modello si ha il fenomeno dell'overfitting a causa della differenza tra il valore che assume la funzione di perdita nel training set e quello sul validation set.
+
+#### **Rete neurale convoluzionale per la classificazione binaria**
+
+Visto i numerosi problemi riscontrati con la classe *osteopenia* si è provato a modificare il dataset iniziale costruendo un dataset a due classi. La classe *normale* non è stata modificata e sono state inserite le stesse immagini del dataset originario, mentre si è creata una sola classe *osteoporosi* unendo le immagini che stavano originariamente nella classe *osteoporosi* e nella classe *osteopenia*. Per motivi di dimensioni di questo file si è deciso di non riportare il codice utilizzato per creare una nuova cartella contenente il nuovo dataset. É stato, quindi, ottenuto un dataset formato da:
+
+-   974 immagini nel training set di cui 584 nella classe *osteoporosi* e 390 nella classe *normale*
+
+-   487 immagini nel validation set di cui 292 nella classe *osteoporosi* e 195 nella classe *normale*
+
+-   486 immagini nel test set di cui 291 nella classe *osteoporosi* e 195 nella classe *normale*.
+
+Si è deciso di applicare la seguente rete convoluzionale, imponendo un layer di output con un solo nodo e funzione di attivazione sigmoidale poichè si tratta di un problema di classificazione binaria. La dimensione delle immagini è stata impostata come (224x224x3).
+
+```{r eval=FALSE}
+model <- keras_model_sequential() %>%
+  layer_conv_2d(filters = 32, kernel_size = c(3, 3), activation = "relu", input_shape = c(224, 224, 3)) %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 64, kernel_size = c(3, 3), activation = "relu") %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 128, kernel_size = c(3, 3), activation = "relu") %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 128, kernel_size = c(3, 3), activation = "relu") %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_flatten() %>%
+  layer_dense(units = 512, activation = "relu") %>%
+  layer_dropout(0.5)%>%
+  layer_dense(units = 256, activation = "relu") %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = 1, activation = "sigmoid")
+
+model %>% compile(
+  loss = "binary_crossentropy",
+  optimizer = "adam",
+  metrics = c("acc")
+)
+```
+
+É stato generato il training set e il validation set senza applicare la tecnica di data augmentation ed è stato allenato il modello.
+
+```{r eval=FALSE}
+datagen<- image_data_generator(rescale = 1/255)
+#genero il training senza data augmentation
+train_generator <- flow_images_from_directory(
+  train_dir,
+  datagen,
+  target_size = c(224, 224),
+  batch_size = 16,
+  class_mode = "binary"
+)
+
+#genero il validation
+validation_generator <- flow_images_from_directory(
+  validation_dir,
+  datagen,
+  target_size = c(224, 224),
+  batch_size = 16,
+  class_mode = "binary"
+)
+
+history <- model %>% fit(
+  train_generator,
+  epochs = 20,  
+  steps_per_epoch = 61,   #974/16=61 (num obs train / batch size)
+  validation_data = validation_generator,
+  validation_steps = 30   #487/16=30 (num obs validation / batch size)
+)
+plot(history)
+```
+
+```         
+Final epoch (plot to see history):     
+loss: 0.0382      acc: 0.9743 
+val_loss: 0.6235  val_acc: 0.9312 
+```
+
+![`Rete per classificazione binaria`](images/rete%20con%202%20classi%2020%20epoche.png){width="642"}
+
+Come si può notare dal grafico la rete dopo l'epoca 10 inizia a presentare il fenomeno dell'overfitting, lo si nota soprattutto dal valore che assume la funzione di loss. Si è quindi deciso di applicare la tecnica di early stopping a 10 epoche raggiungendo i seguenti risultati:
+
+```{r eval=FALSE}
+#early stopping
+history2 <- model %>% fit(
+  train_generator,
+  epochs = 10,  
+  steps_per_epoch = 61,  
+  validation_data = validation_generator,
+  validation_steps = 30  
+)
+history2
+```
+
+```         
+Final epoch (plot to see history):     
+loss: 0.127       acc: 0.9435 
+val_loss: 0.4407  val_acc: 0.875
+```
+
+La metrica *accuracy* assume un valore ottimo sia nel training che nel validation set e il problema dell'overfitting è diminuito. Viene poi applicato il modello al test set per valutare i risultati finali.
+
+```{r eval=FALSE}
+test_generator <- flow_images_from_directory(
+  test_dir,
+  datagen,
+  target_size = c(224, 224),
+  batch_size = 16,
+  class_mode = "binary",
+  shuffle=F 
+)
+model %>% evaluate(test_generator, steps = 30)
+y<-predict(model, test_generator) 
+y_pred<-ifelse(y>=0.5, 1, 0)
+y_oss<-test_generator$classes
+conf<- confusionMatrix(as.factor(y_pred), as.factor(y_oss))
+conf
+```
+
+```         
+Confusion Matrix and Statistics            
+          Reference 
+Prediction   0    1         
+          0  167  46          
+          1  28   245           
+          
+Accuracy    : 0.8477  
+Sensitivity : 0.8564          
+Specificity : 0.8419  
+
+#la classe 0 si riferisce alla classe normale, mentre la classe 1 alla classe osteopenia
+```
+
+Le metriche *accuracy*, *specificity* e *sensitivity* assumono tutte valori ottimali, si può quindi concludere che la rete neurale applicata a un dataset composto da due classi performa il modo ottimale. Inoltre si può confermare il fatto che le immagini associate alla classe *osteopenia* sono quelle più difficili da individuare, mentre le radiografie associate a persone affette da osteoporosi a differenza da quelle associate a pazienti non affetti da alcuna malattia sono facilmente distinguibili.
+
+### **Conclusione**
+
+Nel progetto qui presentato sono state applicate diverse tecniche di statistical learning che permettono la classificazione di immagini di radiografie al ginocchio in tre differenti stadi della malattia osteoporosi; dallo stato *normale*, in cui la malattia non si è ancora sviluppata, allo stato intermedio identificato come *osteopenia* e infine allo stato più acuto della malattia ovvero la classe *osteoporosi*. Come primo modello è stata implementata una rete convoluzionale sul dataset completo ottenendo risultati abbastanza soddisfancenti, facendo però emergere un problema di overfitting e una difficile individuazione della classe *osteopenia.* Le classi nel dataset considerato sono sbilanciate per cui è stata utilizzata la tecnica di data augmentation solo per la classe con numerosità inferiore e si sono ottenuti risultati simili alla rete precedente, con un piccolo miglioramento nell'individuazione dell'etichetta *osteopenia*. Il problema di overfitting, invece, è stato mitigato dalla rete convoluzionale in cui tutte le immagini del training sono state aumentate tramite data augmentation. Il modello classifica in modo ottimale la classe *osteopenia* ma performa in modo peggiore per le altre due classi. A causa della piccola dimensione del dataset in esame è stata applicata la tecnica di feature extraction tramite la rete convoluzionale pre-allenata VGG-19 con cui si sono ottenuti risultati ottimali, anche se la classe *osteopenia* è sempre stata quella più difficile da individuare. Come ultimo si è scelto di passare a un problema di classificazione binaria, modificando il dataset, e individuando le immagini della classe *osteoporosi* e quelle della classe *normale*. Con quest'ultima rete convoluzionale si sono ottenuti risultati ottimi.
+
+In questo progetto si sono avuti diversi problemi di capacità computazionale a causa della dimensione delle immagini. Si potrebbero ottenere risultati migliori applicando metodi come il fine tuning oppure selezionando un dataset con numerosità maggiore. Partendo dai risultati ottenuti si potrebbe, inoltre, applicare il metodo di conformal prediction che è in grado di individuare un prediction set contenente le classi con probabilità di appartenenza a posteriori più elevata. Questo problema di classificazione di radiografie in diversi tipi di malattia delle ossa è un problema molto comune in ambito medico e metodi di deep learning, come quelli mostrati, possono aiutare a prendere decisioni importanti sulle cure da applicare ai pazienti.
